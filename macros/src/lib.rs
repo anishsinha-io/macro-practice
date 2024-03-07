@@ -2,6 +2,8 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::DeriveInput;
 
+mod util;
+
 #[proc_macro_derive(Builder)]
 pub fn derive(input: TokenStream) -> TokenStream {
     let ast = syn::parse_macro_input!(input as DeriveInput);
@@ -19,42 +21,11 @@ pub fn derive(input: TokenStream) -> TokenStream {
         _ => unimplemented!(),
     };
 
-    // let option_unwrapped = |f|
-
-    let option_wrapped = |ty: &syn::Type| {
-        if let syn::Type::Path(ref p) = ty {
-            let leading_path = &p
-                .path
-                .segments
-                .iter()
-                .take(3)
-                .into_iter()
-                .fold("".to_owned(), |acc, el| acc + "::" + &el.ident.to_string())[2..];
-
-            return match leading_path {
-                "Option" | "option::Option" | "std::option::Option" => true,
-                _ => false,
-            };
-        };
-        false
-    };
-
-    let flattened_option = |ty: &syn::Type| {};
-
-    let unwrap_option = |ty: &syn::Type| {
-        if let syn::Type::Path(ref p) = ty {
-            if let syn::PathArguments::AngleBracketed(ref inner_ty) = p.path.segments[0].arguments {
-            } else {
-                panic!("Option type was not Option<T>")
-            }
-        }
-    };
-
     let optionized = fields.iter().map(|f| {
         let name = &f.ident;
         let ty = &f.ty;
 
-        if option_wrapped(&f.ty) {
+        if util::is_option(&f.ty) {
             quote! {
                #name: #ty
             }
@@ -69,10 +40,11 @@ pub fn derive(input: TokenStream) -> TokenStream {
         let name = &f.ident;
         let ty = &f.ty;
 
-        if option_wrapped(&f.ty) {
+        if util::is_option(&f.ty) {
+            let unwrapped_ty = util::unwrap_option(&f.ty).unwrap();
             quote! {
-                pub fn #name(&mut self, #name: #ty) -> &mut Self {
-                    self.#name = #name;
+                pub fn #name(&mut self, #name: #unwrapped_ty) -> &mut Self {
+                    self.#name = Some(#name);
                     self
                 }
             }
@@ -95,7 +67,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     let built_fields = fields.iter().map(|f| {
         let name = &f.ident;
-        let wrapped = option_wrapped(&f.ty);
+        let wrapped = util::is_option(&f.ty);
         if wrapped {
             quote! {
                  #name: self.#name.clone()
