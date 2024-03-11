@@ -4,7 +4,7 @@ use syn::DeriveInput;
 
 mod util;
 
-#[proc_macro_derive(Builder)]
+#[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let ast = syn::parse_macro_input!(input as DeriveInput);
 
@@ -58,6 +58,65 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
     });
 
+    let extend_methods = fields.iter().flat_map(|f| {
+        use proc_macro2::TokenTree;
+        let ident = &f.ident;
+        f.attrs.iter().filter_map(move |attr| {
+            use syn::Meta;
+            match attr.meta {
+                Meta::Path(_) => None,
+                Meta::List(ref list) => {
+                    let mut tokens = list.tokens.clone().into_iter().take(3);
+                    // dbg!(&tokens);
+                    if let (
+                        Some(TokenTree::Ident(directive)),
+                        Some(TokenTree::Punct(_)),
+                        Some(TokenTree::Literal(func_name_literal)),
+                    ) = (tokens.next(), tokens.next(), tokens.next())
+                    {
+                        match directive.to_string().as_str() {
+                            "each" => match syn::Lit::new(func_name_literal) {
+                                syn::Lit::Str(s) => {
+                                    let func_ident = syn::Ident::new(&s.value(), s.span());
+                                    let _ = match &f.ty {
+                                        syn::Type::Path(p) => {
+                                            let segments = &mut p.path.segments.iter();
+                                            if let (Some(s), None) =
+                                                (segments.next(), segments.next())
+                                            {
+                                                dbg!(&s.ident);
+                                                // match s.ident.to_string().as_str() {
+                                                //     "Vec" => (),
+                                                //     _ => return None
+                                                // };
+                                            };
+
+                                            Some(())
+                                        }
+                                        _ => None,
+                                    };
+                                    Some(quote! {
+                                        pub fn #func_ident(&mut self) {
+                                            if let Some(ref mut v) = self.#ident {}
+                                            else {}
+                                        }
+                                    })
+                                }
+                                _ => None,
+                            },
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                }
+                Meta::NameValue(_) => None,
+            }
+        })
+    });
+
+    // dbg!(extend_methods.collect::<Vec<_>>());
+
     let defaults = fields.iter().map(|f| {
         let name = &f.ident;
         quote! {
@@ -91,13 +150,16 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 }
             }
 
-            #(#methods)*
-
             pub fn build(&self) -> Result<#name, Box<dyn std::error::Error>> {
                 Ok(#name {
                     #(#built_fields,)*
                 })
             }
+
+            #(#methods)*
+
+            #(#extend_methods)*
+
         }
 
         impl #name {
